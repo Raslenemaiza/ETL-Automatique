@@ -262,7 +262,7 @@ class ETLAuto:
         pdf.set_fill_color(229, 9, 20)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font('Helvetica', 'B', 9)
-        pdf.cell(190, 9, '  Pipeline ETL Automatique — Python & Streamlit',
+        pdf.cell(190, 9, '  Pipeline ETL Automatique - Python & Streamlit',
                  fill=True, ln=True, align='C')
 
         buf = io.BytesIO()
