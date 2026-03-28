@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 # ── Configuration page ─────────────────────────────────────────────────
 st.set_page_config(
     page_title="ETL Automatique",
-    page_icon="🔧",
+    page_icon="ETL",
     layout="wide"
 )
 
@@ -64,118 +64,242 @@ class ETLAuto:
         }).sort_values('Manquants', ascending=False)
 
     def transform(self):
-    print('\n=== TRANSFORMATIONS ===')
+        log = []
 
-    # T1 — Suppression doublons
-    before = len(self.df)
-    self.df.drop_duplicates(inplace=True)
-    n = before - len(self.df)
-    print(f'   T1 Doublons supprimes       : {n}')
-    self.rapport.append(f'T1 Doublons : {n} supprimes')
+        # T1 — Suppression doublons
+        before = len(self.df)
+        self.df.drop_duplicates(inplace=True)
+        n = before - len(self.df)
+        log.append(f'T1 - Doublons supprimes : {n}')
 
-    # T2 — Suppression colonnes ID inutiles
-    id_cols = [c for c in self.df.columns
-               if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
-    if id_cols:
-        self.df.drop(columns=id_cols, inplace=True)
-        print(f'   T2 Colonnes ID supprimees    : {id_cols}')
-        self.rapport.append(f'T2 Colonnes ID supprimees : {id_cols}')
-    else:
-        print(f'   T2 Aucune colonne ID detectee')
+        # T2 — Suppression colonnes ID inutiles
+        id_cols = [c for c in self.df.columns
+                   if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
+        if id_cols:
+            self.df.drop(columns=id_cols, inplace=True)
+        log.append(f'T2 - Colonnes ID supprimees : {id_cols}')
 
-    # T3 — Nettoyage espaces
-    str_cols = self.df.select_dtypes(include='object').columns
-    for col in str_cols:
-        self.df[col] = self.df[col].astype(str).str.strip()
-    print(f'   T3 Espaces nettoyes          : {len(str_cols)} colonnes')
-    self.rapport.append(f'T3 Espaces : {len(str_cols)} colonnes nettoyees')
+        # T3 — Nettoyage espaces
+        str_cols = self.df.select_dtypes(include='object').columns
+        for col in str_cols:
+            self.df[col] = self.df[col].astype(str).str.strip()
+        log.append(f'T3 - Espaces nettoyes : {len(str_cols)} colonnes')
 
-    # T4 — Imputation automatique
-    n_total = 0
-    for col in self.df.columns:
-        n_miss  = self.df[col].isin(['nan','NaN','None','']).sum()
-        n_miss += self.df[col].isnull().sum()
-        if n_miss > 0:
-            if self.df[col].dtype == 'object':
-                self.df[col] = self.df[col].replace(
-                    {'nan':'Unknown','NaN':'Unknown',
-                     'None':'Unknown','':'Unknown'}
-                ).fillna('Unknown')
-            else:
-                self.df[col] = self.df[col].fillna(self.df[col].median())
-            n_total += n_miss
-    print(f'   T4 Valeurs imputees          : {n_total}')
-    self.rapport.append(f'T4 Imputation : {n_total} valeurs')
+        # T4 — Imputation automatique
+        n_total = 0
+        for col in self.df.columns:
+            n_miss  = self.df[col].isin(['nan','NaN','None','']).sum()
+            n_miss += self.df[col].isnull().sum()
+            if n_miss > 0:
+                if self.df[col].dtype == 'object':
+                    self.df[col] = self.df[col].replace(
+                        {'nan':'Unknown','NaN':'Unknown',
+                         'None':'Unknown','':'Unknown'}
+                    ).fillna('Unknown')
+                else:
+                    self.df[col] = self.df[col].fillna(self.df[col].median())
+                n_total += n_miss
+        log.append(f'T4 - Imputation : {n_total} valeurs')
 
-    # T5 — Conversion dates COMPLETE (6 features)
-    n_dates = 0
-    for col in self.df.select_dtypes(include='object').columns:
-        if any(k in col.lower() for k in ['date', 'time']):
-            try:
-                self.df[col] = pd.to_datetime(
-                    self.df[col], dayfirst=True, errors='coerce'
+        # T5 — Conversion dates COMPLETE (6 features)
+        n_dates = 0
+        for col in self.df.select_dtypes(include='object').columns:
+            if any(k in col.lower() for k in ['date', 'time']):
+                try:
+                    self.df[col] = pd.to_datetime(
+                        self.df[col], dayfirst=True, errors='coerce'
+                    )
+                    prefix = col.lower().replace('date', '').strip('_') or 'sale'
+                    self.df[f'year_{prefix}']        = self.df[col].dt.year.astype('Int64')
+                    self.df[f'month_{prefix}']       = self.df[col].dt.month.astype('Int64')
+                    self.df[f'day_{prefix}']         = self.df[col].dt.day.astype('Int64')
+                    self.df[f'quarter_{prefix}']     = self.df[col].dt.quarter.astype('Int64')
+                    self.df[f'month_name_{prefix}']  = self.df[col].dt.strftime('%B')
+                    self.df[f'day_of_week_{prefix}'] = self.df[col].dt.strftime('%A')
+                    n_dates += 1
+                except:
+                    pass
+        log.append(f'T5 - Dates converties : {n_dates} (6 features extraites)')
+
+        # T6 — Outliers (seulement si > 1% d'outliers)
+        num_cols   = self.df.select_dtypes(include=np.number).columns
+        n_outliers = 0
+        for col in num_cols:
+            Q1   = self.df[col].quantile(0.25)
+            Q3   = self.df[col].quantile(0.75)
+            IQR  = Q3 - Q1
+            mask = ((self.df[col] < Q1 - 1.5*IQR) |
+                    (self.df[col] > Q3 + 1.5*IQR))
+            if mask.sum() / len(self.df) > 0.01:
+                self.df[f'{col}_outlier'] = mask.astype(int)
+                n_outliers += mask.sum()
+        log.append(f'T6 - Outliers flagués : {n_outliers}')
+
+        # T7 — Encodage ML
+        le        = LabelEncoder()
+        cat_cols  = self.df.select_dtypes(include='object').columns
+        n_encoded = 0
+        for col in cat_cols:
+            if self.df[col].nunique() < 50:
+                self.df[f'{col}_encoded'] = le.fit_transform(
+                    self.df[col].astype(str)
                 )
-                # Extraction des 6 features temporelles
-                prefix = col.lower().replace('date', '').strip('_') or 'sale'
-                self.df[f'year_{prefix}']      = self.df[col].dt.year.astype('Int64')
-                self.df[f'month_{prefix}']     = self.df[col].dt.month.astype('Int64')
-                self.df[f'day_{prefix}']       = self.df[col].dt.day.astype('Int64')
-                self.df[f'quarter_{prefix}']   = self.df[col].dt.quarter.astype('Int64')
-                self.df[f'month_name_{prefix}']= self.df[col].dt.strftime('%B')
-                self.df[f'day_of_week_{prefix}']= self.df[col].dt.strftime('%A')
-                n_dates += 1
-            except:
-                pass
-    print(f'   T5 Dates converties          : {n_dates} (6 features chacune)')
-    self.rapport.append(f'T5 Dates : {n_dates} colonnes converties en 6 features')
+                n_encoded += 1
+        log.append(f'T7 - Encodage ML : {n_encoded} colonnes')
 
-    # T6 — Outliers (colonnes numeriques uniquement)
-    num_cols   = self.df.select_dtypes(include=np.number).columns
-    n_outliers = 0
-    for col in num_cols:
-        Q1  = self.df[col].quantile(0.25)
-        Q3  = self.df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        mask = ((self.df[col] < Q1 - 1.5*IQR) |
-                (self.df[col] > Q3 + 1.5*IQR))
-        # On flag uniquement si plus de 1% d'outliers
-        if mask.sum() / len(self.df) > 0.01:
-            self.df[f'{col}_outlier'] = mask.astype(int)
-            n_outliers += mask.sum()
-    print(f'   T6 Outliers flagués          : {n_outliers}')
-    self.rapport.append(f'T6 Outliers : {n_outliers} flagués')
+        # T8 — Score completude
+        quality_cols = [c for c in self.df.select_dtypes(include='object').columns
+                        if '_encoded' not in c and 'name' not in c
+                        and 'week' not in c][:5]
+        if quality_cols:
+            self.df['completeness_score'] = (
+                self.df[quality_cols].apply(lambda row: sum(
+                    1 for v in row
+                    if pd.notna(v) and str(v) not in ['Unknown', 'nan', '']
+                ), axis=1) / len(quality_cols) * 100
+            ).round(1)
+        else:
+            self.df['completeness_score'] = 100.0
+        log.append('T8 - Score completude calcule')
 
-    # T7 — Encodage ML
-    le       = LabelEncoder()
-    cat_cols = self.df.select_dtypes(include='object').columns
-    n_encoded = 0
-    for col in cat_cols:
-        if self.df[col].nunique() < 50:
-            self.df[f'{col}_encoded'] = le.fit_transform(
-                self.df[col].astype(str)
-            )
-            n_encoded += 1
-    print(f'   T7 Colonnes encodees         : {n_encoded}')
-    self.rapport.append(f'T7 Encodage : {n_encoded} colonnes')
+        self.rapport = log
+        return log
 
-    # T8 — Score completude
-    quality_cols = [c for c in self.df.select_dtypes(include='object').columns
-                    if '_encoded' not in c and 'name' not in c
-                    and 'week' not in c][:5]
-    self.df['completeness_score'] = (
-        self.df[quality_cols].apply(lambda row: sum(
-            1 for v in row
-            if pd.notna(v) and str(v) not in ['Unknown','nan','']
-        ), axis=1) / len(quality_cols) * 100
-    ).round(1)
-    print(f'   T8 Score completude calcule')
-    self.rapport.append('T8 Score completude calcule')
-    return self
+    def auto_ml(self, target):
+        num_cols = [c for c in self.df.select_dtypes(include=np.number).columns
+                    if '_outlier' not in c and '_encoded' not in c
+                    and c != 'completeness_score' and c != target]
+        if len(num_cols) == 0:
+            return None, None, None, None
+
+        X = self.df[num_cols].fillna(0)
+        y = self.df[target].fillna(0)
+
+        n_unique  = y.nunique()
+        prob_type = 'classification' if n_unique <= 10 else 'regression'
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42)
+
+        if prob_type == 'classification':
+            model = RandomForestClassifier(n_estimators=100, random_state=42)
+        else:
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+
+        importances = pd.DataFrame({
+            'Feature'   : num_cols,
+            'Importance': model.feature_importances_
+        }).sort_values('Importance', ascending=False)
+
+        if prob_type == 'classification':
+            score = {'type': 'classification',
+                     'accuracy': accuracy_score(y_test, y_pred) * 100}
+        else:
+            score = {'type': 'regression',
+                     'mae': mean_absolute_error(y_test, y_pred),
+                     'r2' : r2_score(y_test, y_pred) * 100}
+
+        return model, score, importances, prob_type
+
+    def generer_pdf(self):
+        def clean(text):
+            return str(text).encode('latin-1', errors='ignore').decode('latin-1')
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+
+        pdf.set_fill_color(229, 9, 20)
+        pdf.rect(0, 0, 210, 35, 'F')
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font('Helvetica', 'B', 20)
+        pdf.set_xy(10, 8)
+        pdf.cell(0, 10, 'RAPPORT ETL AUTOMATIQUE', ln=True, align='C')
+        pdf.set_font('Helvetica', '', 10)
+        pdf.set_xy(10, 22)
+        pdf.cell(0, 8,
+                 f'Genere le : {datetime.datetime.now().strftime("%d/%m/%Y a %H:%M")}',
+                 ln=True, align='C')
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(10, 45)
+        pdf.set_font('Helvetica', 'B', 13)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(190, 10, '  1. INFORMATIONS DATASET', ln=True, fill=True)
+        pdf.ln(3)
+
+        infos = [
+            ('Fichier',             clean(self.filename)),
+            ('Lignes originales',   f'{len(self.df_raw):,}'),
+            ('Lignes finales',      f'{len(self.df):,}'),
+            ('Colonnes originales', f'{self.df_raw.shape[1]}'),
+            ('Colonnes finales',    f'{self.df.shape[1]}'),
+            ('Score completude',    f'{self.df["completeness_score"].mean():.1f}%'),
+        ]
+        for label, val in infos:
+            pdf.set_x(15)
+            pdf.set_font('Helvetica', 'B', 10)
+            pdf.cell(80, 7, clean(label))
+            pdf.set_font('Helvetica', '', 10)
+            pdf.cell(100, 7, clean(val), ln=True)
+
+        pdf.ln(4)
+        pdf.set_font('Helvetica', 'B', 13)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(190, 10, '  2. TRANSFORMATIONS', ln=True, fill=True)
+        pdf.ln(3)
+        pdf.set_font('Helvetica', '', 10)
+        for i, item in enumerate(self.rapport):
+            pdf.set_x(15)
+            pdf.cell(190, 7, clean(f'{i+1}. {item}'), ln=True)
+
+        pdf.ln(4)
+        pdf.set_font('Helvetica', 'B', 13)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(190, 10, '  3. AUDIT QUALITE', ln=True, fill=True)
+        pdf.ln(3)
+
+        pdf.set_fill_color(52, 73, 94)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_x(15)
+        pdf.cell(70, 7, 'Colonne',   fill=True, border=1)
+        pdf.cell(35, 7, 'Type',      fill=True, border=1)
+        pdf.cell(40, 7, 'Manquants', fill=True, border=1)
+        pdf.cell(40, 7, 'Pct %',     fill=True, border=1, ln=True)
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font('Helvetica', '', 8)
+        missing     = self.df_raw.isnull().sum()
+        missing_pct = (missing / len(self.df_raw) * 100).round(2)
+        for i, col in enumerate(self.df_raw.columns):
+            fill = i % 2 == 0
+            pdf.set_fill_color(245, 245, 245) if fill else pdf.set_fill_color(255, 255, 255)
+            pdf.set_x(15)
+            pdf.cell(70, 6, clean(col[:28]),                 fill=fill, border=1)
+            pdf.cell(35, 6, clean(str(self.df_raw[col].dtype)), fill=fill, border=1)
+            pdf.cell(40, 6, clean(str(missing[col])),        fill=fill, border=1)
+            pdf.cell(40, 6, clean(f'{missing_pct[col]:.2f}%'), fill=fill, border=1, ln=True)
+
+        pdf.ln(8)
+        pdf.set_fill_color(229, 9, 20)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.cell(190, 9, '  Pipeline ETL Automatique - Python & Streamlit',
+                 fill=True, ln=True, align='C')
+
+        buf = io.BytesIO()
+        pdf.output(buf)
+        buf.seek(0)
+        return buf
+
+
 # ══════════════════════════════════════════════════════════════════════
-# INTERFACE STREAMLIT
+# SIDEBAR
 # ══════════════════════════════════════════════════════════════════════
-
-# ── Sidebar ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### Navigation")
     page = st.radio("", [
@@ -187,8 +311,8 @@ with st.sidebar:
         "Rapport PDF"
     ])
     st.markdown("---")
-    st.markdown("**ETL Automatique v1.0**")
-    st.markdown("Projet IA/ML — Anaconda")
+    st.markdown("**ETL Automatique v2.0**")
+    st.markdown("Projet IA/ML - Anaconda")
 
 # ── Session state ──────────────────────────────────────────────────────
 if 'etl' not in st.session_state:
@@ -228,7 +352,7 @@ if page == "Upload Dataset":
             st.session_state.etl = ETLAuto(df, filename=uploaded.name)
             st.session_state.transformed = False
 
-            st.success(f"Dataset charge avec succes !")
+            st.success("Dataset charge avec succes !")
 
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Lignes",    f"{df.shape[0]:,}")
@@ -253,7 +377,7 @@ elif page == "Audit Qualite":
     if st.session_state.etl is None:
         st.warning("Uploade d'abord un dataset !")
     else:
-        etl = st.session_state.etl
+        etl      = st.session_state.etl
         audit_df = etl.audit()
 
         col1, col2 = st.columns(2)
@@ -287,7 +411,7 @@ elif page == "Audit Qualite":
 # PAGE 3 — TRANSFORMATION
 # ══════════════════════════════════════════════════════════════════════
 elif page == "ETL Transformation":
-    st.header("ETL — Transformations Automatiques")
+    st.header("ETL - Transformations Automatiques")
 
     if st.session_state.etl is None:
         st.warning("Uploade d'abord un dataset !")
@@ -295,18 +419,18 @@ elif page == "ETL Transformation":
         etl = st.session_state.etl
 
         if not st.session_state.transformed:
-            st.info("Clique sur le bouton pour lancer toutes les transformations automatiquement !")
+            st.info("Clique sur le bouton pour lancer toutes les transformations !")
             if st.button("Lancer le Pipeline ETL", type="primary", use_container_width=True):
                 with st.spinner("Transformation en cours..."):
                     log = etl.transform()
                     st.session_state.transformed = True
                 st.success("Pipeline ETL termine !")
                 for item in log:
-                    st.write(f"✅ {item}")
+                    st.write(f"OK {item}")
         else:
             st.success("Pipeline ETL deja execute !")
             for item in etl.rapport:
-                st.write(f"✅ {item}")
+                st.write(f"OK {item}")
 
         if st.session_state.transformed:
             col1, col2, col3 = st.columns(3)
@@ -362,7 +486,7 @@ elif page == "Visualisations":
 
         if num_cols:
             st.subheader("Distribution colonnes numeriques")
-            n = min(len(num_cols), 3)
+            n    = min(len(num_cols), 3)
             cols = st.columns(n)
             for i, col in enumerate(num_cols[:n]):
                 with cols[i]:
@@ -379,7 +503,7 @@ elif page == "Visualisations":
 
         if cat_cols:
             st.subheader("Distribution colonnes categorielles")
-            n = min(len(cat_cols), 3)
+            n    = min(len(cat_cols), 3)
             cols = st.columns(n)
             for i, col in enumerate(cat_cols[:n]):
                 with cols[i]:
@@ -413,7 +537,7 @@ elif page == "Modele ML":
     elif not st.session_state.transformed:
         st.warning("Lance d'abord le Pipeline ETL !")
     else:
-        etl = st.session_state.etl
+        etl      = st.session_state.etl
         num_cols = [c for c in etl.df.select_dtypes(include=np.number).columns
                     if '_outlier' not in c and '_encoded' not in c
                     and c != 'completeness_score']
