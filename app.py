@@ -410,7 +410,11 @@ elif page == "Audit Qualite":
                 st.success("Aucune valeur manquante !")
 
         st.subheader("Statistiques generales")
-        st.dataframe(etl.df_raw.describe(), use_container_width=True)
+        # Exclure colonnes ID des statistiques
+id_cols = [c for c in etl.df_raw.columns
+           if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
+df_stats = etl.df_raw.drop(columns=id_cols, errors='ignore')
+st.dataframe(df_stats.describe(), use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════
 # PAGE 3 — TRANSFORMATION
