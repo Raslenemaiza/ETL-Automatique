@@ -55,13 +55,18 @@ class ETLAuto:
         self.rapport  = []
 
     def audit(self):
-        missing     = self.df.isnull().sum()
-        missing_pct = (missing / len(self.df) * 100).round(2)
-        return pd.DataFrame({
-            'Manquants'    : missing,
-            'Pourcentage %': missing_pct,
-            'Type'         : self.df.dtypes
-        }).sort_values('Manquants', ascending=False)
+    # Exclure les colonnes ID de l'audit
+    id_cols = [c for c in self.df.columns
+               if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
+    df_audit = self.df.drop(columns=id_cols, errors='ignore')
+
+    missing     = df_audit.isnull().sum()
+    missing_pct = (missing / len(df_audit) * 100).round(2)
+    return pd.DataFrame({
+        'Manquants'    : missing,
+        'Pourcentage %': missing_pct,
+        'Type'         : df_audit.dtypes
+    }).sort_values('Manquants', ascending=False)
 
     def transform(self):
         log = []
