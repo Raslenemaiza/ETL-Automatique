@@ -55,18 +55,16 @@ class ETLAuto:
         self.rapport  = []
 
     def audit(self):
-    # Exclure les colonnes ID de l'audit
-    id_cols = [c for c in self.df.columns
-               if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
-    df_audit = self.df.drop(columns=id_cols, errors='ignore')
-
-    missing     = df_audit.isnull().sum()
-    missing_pct = (missing / len(df_audit) * 100).round(2)
-    return pd.DataFrame({
-        'Manquants'    : missing,
-        'Pourcentage %': missing_pct,
-        'Type'         : df_audit.dtypes
-    }).sort_values('Manquants', ascending=False)
+        id_cols  = [c for c in self.df.columns
+                    if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
+        df_audit = self.df.drop(columns=id_cols, errors='ignore')
+        missing     = df_audit.isnull().sum()
+        missing_pct = (missing / len(df_audit) * 100).round(2)
+        return pd.DataFrame({
+            'Manquants'    : missing,
+            'Pourcentage %': missing_pct,
+            'Type'         : df_audit.dtypes
+        }).sort_values('Manquants', ascending=False)
 
     def transform(self):
         log = []
@@ -410,11 +408,10 @@ elif page == "Audit Qualite":
                 st.success("Aucune valeur manquante !")
 
         st.subheader("Statistiques generales")
-        # Exclure colonnes ID des statistiques
-id_cols = [c for c in etl.df_raw.columns
-           if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
-df_stats = etl.df_raw.drop(columns=id_cols, errors='ignore')
-st.dataframe(df_stats.describe(), use_container_width=True)
+        id_cols  = [c for c in etl.df_raw.columns
+                    if c.lower() in ['id', 'sale_id', 'index', 'unnamed: 0']]
+        df_stats = etl.df_raw.drop(columns=id_cols, errors='ignore')
+        st.dataframe(df_stats.describe(), use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════
 # PAGE 3 — TRANSFORMATION
